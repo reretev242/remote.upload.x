@@ -1,0 +1,93 @@
+name: Universal Video to Mega Uploader
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Yahan video ka link paste karein (OK.ru, xHamster, etc.)'
+        required: true
+        type: string
+      mega_folder:
+        description: 'Mega Cloud me kis folder me save karna hai?'
+        required: false
+        default: 'Cloud_Videos'
+        type: string
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Install yt-dlp with Browser Impersonation & MEGAcmd
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg wget curl python3-pip
+
+          # yt-dlp ke saath curl-cffi install karna taaki Cloudflare/403 error na aaye
+          pip3 install --break-system-packages -U "yt-dlp[default,curl-cffi]"
+
+          # Official MEGAcmd install karna
+          source /etc/os-release
+          wget -q "https://mega.nz/linux/repo/xUbuntu_${VERSION_ID}/amd64/megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
+          sudo apt-get install -y "./megacmd-xUbuntu_${VERSION_ID}_amd64.deb"
+
+      - name: Step 1 - Login to Mega Cloud First
+        env:
+          MEGA_EMAIL: ${{ secrets.MEGA_EMAIL }}
+          MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
+        run: |
+          if [ -z "$MEGA_EMAIL" ] || [ -z "$MEGA_PASSWORD" ]; then
+            echo "Error: MEGA_EMAIL ya MEGA_PASSWORD GitHub Secrets me set nahi hai!"
+            exit 1
+          fi
+
+          echo "Mega.nz me login ho raha hai..."
+          mega-login "$MEGA_EMAIL" "$MEGA_PASSWORD"
+          mega-whoami
+
+      - name: Step 2 - Download Video
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          mkdir -p downloads
+          echo "Video download shuru ho raha hai..."
+
+          yt-dlp \
+            --impersonate chrome \
+            --no-playlist \
+            --concurrent-fragments 8 \
+            --merge-output-format mp4 \
+            --restrict-filenames \
+            --add-header "Referer:$VIDEO_URL" \
+            -o "downloads/%(title).100B_[%(id)s].%(ext)s" \
+            "$VIDEO_URL"
+
+          echo "Downloaded file details:"
+          ls -lh downloads/
+
+      - name: Step 3 - Upload Video to Mega Cloud
+        env:
+          MEGA_FOLDER: ${{ inputs.mega_folder }}
+        run: |
+          shopt -s nullglob
+          files=(downloads/*)
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Error: Koi bhi video file download nahi hui!"
+            exit 1
+          fi
+
+          for file in "${files[@]}"; do
+            echo "Uploading $file to Mega folder: /$MEGA_FOLDER/ ..."
+            mega-put -c "$file" "/$MEGA_FOLDER/"
+          done
+
+          echo "Upload poori tarah successful raha!"
+
+      - name: Cleanup and Logout
+        if: always()
+        run: |
+          mega-logout || true
+          rm -rf downloads
+          
