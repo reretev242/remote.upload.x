@@ -1,4 +1,4 @@
-name: Universal Video to Mega Uploader
+name: Universal Video to Mega Uploader (1080p)
 
 on:
   workflow_dispatch:
@@ -46,15 +46,16 @@ jobs:
           mega-login "$MEGA_EMAIL" "$MEGA_PASSWORD"
           mega-whoami
 
-      - name: Step 2 - Download Video
+      - name: Step 2 - Download Video (1080p Max)
         env:
           VIDEO_URL: ${{ inputs.video_url }}
         run: |
           mkdir -p downloads
-          echo "Video download shuru ho raha hai..."
+          echo "Video download shuru ho raha hai (1080p limit ke sath)..."
 
           yt-dlp \
             --impersonate chrome \
+            -f "bv*[height<=1080]+ba/b[height<=1080]" \
             --no-playlist \
             --concurrent-fragments 8 \
             --merge-output-format mp4 \
