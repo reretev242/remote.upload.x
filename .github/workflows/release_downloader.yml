@@ -1,0 +1,85 @@
+name: Download Video to GitHub Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Video ya .m3u8 Stream Link yahan paste karein'
+        required: true
+        type: string
+      referer_url:
+        description: 'Main Site URL (Optional, e.g. https://lookmovie2.to/)'
+        required: false
+        default: ''
+        type: string
+      file_name:
+        description: 'Save karne ke liye file ka naam (bina space ke)'
+        required: false
+        default: 'movie_video'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  download-to-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install yt-dlp, curl-cffi and FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg aria2
+          python3 -m pip install -U "yt-dlp[default,curl-cffi]"
+
+      - name: Download Video (Up to 1080p or Best Available)
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          REFERER_URL: ${{ inputs.referer_url }}
+          FILE_NAME: ${{ inputs.file_name }}
+        run: |
+          mkdir -p downloads
+
+          REFERER_ARGS=()
+          if [ -n "$REFERER_URL" ]; then
+            REFERER_ARGS=(--referer "$REFERER_URL" --add-header "Origin:${REFERER_URL%/}")
+          fi
+
+          yt-dlp --impersonate chrome \
+            --geo-bypass \
+            --no-check-certificates \
+            -N 8 \
+            "${REFERER_ARGS[@]}" \
+            -f "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b" \
+            --merge-output-format mp4 \
+            -o "downloads/${FILE_NAME}.%(ext)s" \
+            "$VIDEO_URL"
+
+          ls -lh downloads/
+
+      - name: Check 2GB GitHub Release Limit
+        run: |
+          cd downloads
+          for f in *; do
+            if [ -f "$f" ]; then
+              FILE_SIZE=$(stat -c%s "$f")
+              if [ "$FILE_SIZE" -gt 2000000000 ]; then
+                echo "File 2GB se badi hai, 1.9GB parts mein split kiya ja raha hai..."
+                split -b 1900M -d "$f" "${f}.part"
+                rm -f "$f"
+              fi
+            fi
+          done
+
+      - name: Save to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILE_NAME: ${{ inputs.file_name }}
+        run: |
+          TAG_NAME="dl-${GITHUB_RUN_ID}"
+          gh release create "$TAG_NAME" downloads/* \
+            --title "Video: ${FILE_NAME} (#${GITHUB_RUN_NUMBER})" \
+            --notes "Downloaded via GitHub Actions (1080p or best available resolution)."
+            
